@@ -95,6 +95,25 @@ void NexusDelayAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
 {
     // Use this method as the place to do any pre-playback
     // initialisation that you need..
+
+    juce::dsp::ProcessSpec spec;
+    spec.maximumBlockSize = samplesPerBlock;
+    spec.sampleRate = sampleRate;
+    spec.numChannels = 1;
+
+    chain_0.prepare(spec);
+    chain_1.prepare(spec);
+
+    auto chainSettings = getChainSettings(apvts);
+
+    auto peakCoeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
+        sampleRate,
+        chainSettings.peakFreq,
+        chainSettings.peakQuality,
+        juce::Decibels::decibelsToGain(chainSettings.peakGainInDecibels));
+
+    *chain_0.get<ChainPositions::Peak>().coefficients = *peakCoeffs;
+    *chain_1.get<ChainPositions::Peak>().coefficients = *peakCoeffs;
 }
 
 void NexusDelayAudioProcessor::releaseResources()
@@ -144,18 +163,44 @@ void NexusDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
 
+    auto chainSettings = getChainSettings(apvts);
+
+    auto peakCoeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
+        getSampleRate(),
+        chainSettings.peakFreq,
+        chainSettings.peakQuality,
+        juce::Decibels::decibelsToGain(chainSettings.peakGainInDecibels));
+
+    *chain_0.get<ChainPositions::Peak>().coefficients = *peakCoeffs;
+    *chain_1.get<ChainPositions::Peak>().coefficients = *peakCoeffs;
+
     // This is the place where you'd normally do the guts of your plugin's
     // audio processing...
     // Make sure to reset the state if your inner loop is processing
     // the samples and the outer loop is handling the channels.
     // Alternatively, you can process the samples with the channels
     // interleaved by keeping the same state.
+    /*
     for (int channel = 0; channel < totalNumInputChannels; ++channel)
     {
         auto* channelData = buffer.getWritePointer (channel);
 
         // ..do something to the data...
     }
+    */
+
+    juce::dsp::AudioBlock<float> block(buffer);
+
+    auto block_0 = block.getSingleChannelBlock(0);
+    auto block_1 = block.getSingleChannelBlock(1);
+
+    juce::dsp::ProcessContextReplacing<float> context_0(block_0);
+    juce::dsp::ProcessContextReplacing<float> context_1(block_1);
+    
+    chain_0.process(context_0);
+    chain_1.process(context_1);
+
+
 }
 
 //==============================================================================
@@ -186,8 +231,24 @@ void NexusDelayAudioProcessor::setStateInformation (const void* data, int sizeIn
     // whose contents will have been created by the getStateInformation() call.
 }
 
-juce::AudioProcessorValueTreeState::ParameterLayout
-NexusDelayAudioProcessor::createParameterLayout()
+ChainSettings getChainSettings(juce::AudioProcessorValueTreeState& apvts)
+{
+    ChainSettings settings;
+
+    settings.lowCutFreq         = apvts.getRawParameterValue("LowCut Freq"  )->load();
+    settings.lowCutSlope        = apvts.getRawParameterValue("LowCut Slope" )->load();
+
+    settings.highCutFreq        = apvts.getRawParameterValue("HighCut Freq" )->load();
+    settings.highCutSlope       = apvts.getRawParameterValue("HighCut Slope")->load();
+
+    settings.peakFreq           = apvts.getRawParameterValue("Peak Freq"    )->load();
+    settings.peakGainInDecibels = apvts.getRawParameterValue("Peak Gain"    )->load();
+    settings.peakQuality        = apvts.getRawParameterValue("Peak Quality" )->load();
+
+    return settings;
+}
+
+juce::AudioProcessorValueTreeState::ParameterLayout NexusDelayAudioProcessor::createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
